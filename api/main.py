@@ -4,13 +4,36 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.middleware.cors import CORSMiddleware
 from api.routers import api, index
+from secondsight.model import ModelFactory
+from contextlib import asynccontextmanager
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    try:
+        app.state.enigmaai  = ModelFactory.get_model(
+            ModelFactory.ModelType.SCENE,
+            ModelFactory.ModelName.ENIGMAAI)
+        print(f"EnigmaAI model initialised")
+        
+        app.state.llava  = ModelFactory.get_model(
+            ModelFactory.ModelType.SCENE,
+            ModelFactory.ModelName.LLAVA)
+        print(f"LLaVA model initialised")
+    except Exception as e:
+        print(f"Failed to initialise model: {str(e)}")
+        raise
+    yield
+    # Shutdown
+    app.state.enigmaai.finalize()
+    app.state.llava.finalize()
+
+app = FastAPI(lifespan=lifespan)
 
 # Allow CORS for frontend (if you plan to connect to this via a frontend app)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust for your needs
+    allow_origins=["*"],  # Change to specific domains in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

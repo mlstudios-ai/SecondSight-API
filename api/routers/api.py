@@ -1,61 +1,63 @@
-from fastapi import APIRouter, HTTPException, File, UploadFile, Form, WebSocket, WebSocketDisconnect 
-from fastapi.responses import JSONResponse
+import os
 import io
-import numpy as np
 from PIL import Image
-from pydantic import BaseModel
-from typing import Optional, List, Dict
-import cv2
-import torch
-
+from pathlib import Path
+from huggingface_hub import InferenceClient
+from fastapi import APIRouter, HTTPException, File, UploadFile, Form, WebSocket, WebSocketDisconnect, Depends, Request
+from fastapi.responses import JSONResponse
+from secondsight.model import ModelFactory, SceneModel
+    
 router = APIRouter()
 
-# model = torch.hub.load("ultralytics/yolov5", "yolov5s")
+def get_enigmaai_model(request: Request) -> SceneModel:
+    """Dependency to get the model from application state."""
+    return request.app.state.enigmaai
 
-# # Load your custom YOLOv5 model (replace with your path)
-# model = torch.load('path/to/your/custom_yolo_model.pt')
-# model.eval()  # Set the model to evaluation mode
+def get_llava_model(request: Request) -> SceneModel:
+    """Dependency to get the model from application state."""
+    return request.app.state.llava
+    
+@router.post("/api/scene/describe")
+async def infer(
+    file: UploadFile = File(...),
+    prompt: str = Form(...),
+    model: SceneModel = Depends(get_enigmaai_model)
+):
+    try:
+        # Validate file type
+        if not file.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail="File must be an image")
+        
+        # Read and validate file size (e.g., max 10MB)
+        image_bytes = await file.read()
+        # if len(image_bytes) > 10 * 1024 * 1024:  # 10MB
+        #     raise HTTPException(status_code=400, detail="File too large. Maximum size is 10MB")
+        
+        # Validate prompt
+        if not prompt or len(prompt.strip()) == 0:
+            raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+        
+        # Process the image
+        try:
+            image = Image.open(io.BytesIO(image_bytes))
+            save_path = "/Users/jasper/Anna/Uni/UTS/MAI/Subjects/AIS/project/SecondSight-API/api/static/scene"
+            file_location = os.path.join(save_path, file.filename)
+            with open(file_location, "wb") as buffer:
+                buffer.write(image_bytes)
+        
+            response = model.predict(image, prompt)
+            return {"detail": response}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-# detect objects in the frame. 
-def detect_objects(frame: np.ndarray) -> List[Dict]:
-    # Example dummy detection: bounding boxes with random values
-    # Replace with YOLO or other detection models
-    detections = [
-        {"class": "person", "confidence": 0.95, "box": [50, 50, 200, 200]},
-        {"class": "car", "confidence": 0.85, "box": [300, 100, 500, 400]},
-    ]
-    return detections
-
-# Detect objects with 1 single image or frame
-@router.post("/api/hazard/detect/image")
-async def detect_image(file: UploadFile):
-    # Read image from the uploaded file
-    image_data = await file.read()
-
-    # Convert to numpy array
-    nparr = np.frombuffer(image_data, np.uint8)
-    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-    # Perform object detection (replace with your actual detection model)
-    detections = detect_objects(img)
-
-    # Return detection details as JSON
-    return JSONResponse(content={"detections": detections})
-
-@router.get("/api/scene/describe")
-async def describe(  
-            image: bytes = File(...),  # Accepting image as a file parameter
-            focus_objects: List[str] = Form(...)  # Accepting a list of strings from form data
-        ):
-    # Convert the image bytes into a Pillow Image object
-    image = Image.open(io.BytesIO(image))
-
-    # Process the image (for demonstration purposes, we'll just print the image size)
-    image_size = image.size
-
-    # Return the image size and the list of strings as part of the response
-    return JSONResponse(content={
-        "received_strings": focus_objects,
-        "image_size": image_size,
-        "description": "Description is produced by VLM. This is a dummy description"
-    })
+@router.get("/api/aya/scene/describe")
+async def ayaInfer(
+    file: UploadFile = File(...),
+    prompt: str = Form(...),
+    model: SceneModel = Depends(get_llava_model)):
+    return infer(file, prompt, model)

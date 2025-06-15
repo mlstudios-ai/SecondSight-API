@@ -55,9 +55,18 @@ async def infer(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@router.get("/api/aya/scene/describe")
-async def ayaInfer(
+# @router.post("/api/aya/scene/describe")
+# async def ayaInfer(
+#     file: UploadFile = File(...),
+#     prompt: str = Form(...),
+#     model: SceneModel = Depends(get_llava_model)):
+#     return infer(file, prompt, model)
+
+@router.post("/api/llava/scene/describe")
+async def llavaInfer(
     file: UploadFile = File(...),
     prompt: str = Form(...),
     model: SceneModel = Depends(get_llava_model)):
-    return infer(file, prompt, model)
+    
+    restuls = await infer(file, prompt, model)
+    return restuls

@@ -202,20 +202,57 @@ class AyaVision(SceneModel):
     
 class LlavaVision(SceneModel):
     def __init__(self, model_name: str):        
+        
         super().__init__(model_name)   
         try:            
-            self._model = LlavaForConditionalGeneration.from_pretrained(model_name, torch_dtype=torch.float16).to(self._device)
-            self._processor = AutoProcessor.from_pretrained(model_name, use_fast=True)
+            self._model = LlavaForConditionalGeneration.from_pretrained(
+                model_name, torch_dtype=torch.float16,low_cpu_mem_usage=True
+            ).to(self._device)
+            
+            self._processor = AutoProcessor.from_pretrained(model_name)
+            
+            # Ensure pad token is set
+            if self._processor.tokenizer.pad_token is None:
+                self._processor.tokenizer.pad_token = self._processor.tokenizer.eos_token
+                
         except Exception as e:
             raise ModelLoadError(f"Failed to load LlavaVision model: {str(e)}")
-        
+            
     def predict(self, image: Union[Image.Image, bytes], prompt: str, **kwargs) -> str:
         try:
             if isinstance(image, bytes):
                 image = Image.open(io.BytesIO(image)).convert("RGB")
-            inputs = self._processor(images=image, text=prompt, return_tensors="pt").to(self._device)
-            output_ids = self._model.generate(**inputs)
-            return self._processor.decode(output_ids[0], skip_special_tokens=True)
+            
+            # Use a simple format that LLaVA understands
+            formatted_prompt = f"USER: <image>\n{prompt}\nASSISTANT:"
+            
+            inputs = self._processor(
+                images=image, 
+                text=formatted_prompt, 
+                return_tensors="pt"
+            ).to(self._device)
+            
+            with torch.no_grad():
+                output_ids = self._model.generate(
+                    **inputs,
+                    max_new_tokens=512,
+                    do_sample=True,
+                    temperature=0.7,
+                    pad_token_id=self._processor.tokenizer.eos_token_id,
+                    eos_token_id=self._processor.tokenizer.eos_token_id
+                )
+            
+            # Decode and clean up
+            full_response = self._processor.decode(output_ids[0], skip_special_tokens=True)
+            
+            # Extract only the assistant's response
+            if "ASSISTANT:" in full_response:
+                response = full_response.split("ASSISTANT:")[-1].strip()
+            else:
+                response = full_response.strip()
+                
+            return response
+            
         except Exception as e:
             raise PredictionError(f"LlavaVision prediction failed: {str(e)}")
 

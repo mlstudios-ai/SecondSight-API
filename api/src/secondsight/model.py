@@ -41,8 +41,12 @@ from transformers import (
     AutoTokenizer,
     VisionEncoderDecoderModel,
     AutoModelForImageTextToText,
-    LlavaForConditionalGeneration
+    LlavaForConditionalGeneration,
+    AutoModelForVision2Seq,
+    BitsAndBytesConfig
 )
+from transformers.utils import logging
+
 from secondsight import util
 
 class ModelError(Exception):
@@ -169,35 +173,74 @@ class SceneModel(BaseModel):
             PredictionError: If prediction fails
         """
         pass
-      
-class AyaVision(SceneModel):
-    def __init__(self, model_name: str):        
-        super().__init__(model_name)   
-        try:
-            self._processor = AutoProcessor.from_pretrained(model_name)
-            self._model = AutoModelForImageTextToText.from_pretrained(model_name).to(self._device)
-        except Exception as e:
-            raise ModelLoadError(f"Failed to load AyaVision model: {str(e)}")
-        
-    def predict(self, image: Union[Image.Image, bytes], prompt: str, **kwargs) -> str:
-        if isinstance(image, bytes):
-            image = Image.open(io.BytesIO(image)).convert("RGB")
-    
-        # Use chat template if required by your model
-        conversation = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image"},
-                    {"type": "text", "text": prompt}
-                ],
-            },
-        ]
-        prompt = self._processor.apply_chat_template(conversation, add_generation_prompt=True)
 
-        inputs = self._processor(images=image, text=prompt, return_tensors="pt").to(self._device)
-        output_ids = self._model.generate(**inputs)
-        return self._processor.decode(output_ids[0], skip_special_tokens=True)
+class AyaVision(SceneModel):
+    def __init__(self, model_name):
+        super().__init__(model_name)
+        self._model = model = AutoModelForImageTextToText.from_pretrained(
+                model_name, device_map="auto", torch_dtype=torch.float16
+            )
+        self._processor = AutoProcessor.from_pretrained(model_name)
+    
+    def predict(self, image: Union[Image.Image, bytes], prompt: str, **kwargs) -> str:
+        try:
+            if isinstance(image, bytes):
+                image = Image.open(io.BytesIO(image)).convert("RGB")
+            
+            # Use a simple format that LLaVA understands
+            formatted_prompt = f"USER: <image>\n{prompt}\nASSISTANT:"
+            
+            inputs = self._processor(
+                images=image, 
+                text=formatted_prompt, 
+                return_tensors="pt"
+            ).to(self._device)
+            
+            with torch.no_grad():
+                output_ids = self._model.generate(
+                    **inputs,
+                    max_new_tokens=50,
+                    do_sample=True,
+                    temperature=0.7,
+                    pad_token_id=self._processor.tokenizer.eos_token_id,
+                    eos_token_id=self._processor.tokenizer.eos_token_id,
+                    **kwargs
+                )
+            
+            # Decode and clean up
+            full_response = self._processor.decode(output_ids[0], skip_special_tokens=True)
+            
+            # Extract only the assistant's response
+            if "ASSISTANT:" in full_response:
+                response = full_response.split("ASSISTANT:")[-1].strip()
+            else:
+                response = full_response.strip()
+                
+            return response
+            
+        except Exception as e:
+            raise PredictionError(f"AyaVision prediction failed: {str(e)}")
+    
+    def finalize(self):
+        """Clean up model resources in a platform-agnostic way."""
+        try:
+            # Clean up model
+            if hasattr(self, '_model') and self._model is not None:
+                del self._model
+                self._model = None
+            
+            # Call parent cleanup (which handles processor)
+            super().finalize()
+            
+            # Clear CUDA cache if available
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                
+            print("AyaVision model resources cleaned up successfully")
+            
+        except Exception as e:
+            print(f"Warning: Error during AyaVision cleanup: {str(e)}")
+
 
     
 class LlavaVision(SceneModel):
@@ -235,11 +278,12 @@ class LlavaVision(SceneModel):
             with torch.no_grad():
                 output_ids = self._model.generate(
                     **inputs,
-                    max_new_tokens=512,
+                    max_new_tokens=50,
                     do_sample=True,
                     temperature=0.7,
                     pad_token_id=self._processor.tokenizer.eos_token_id,
-                    eos_token_id=self._processor.tokenizer.eos_token_id
+                    eos_token_id=self._processor.tokenizer.eos_token_id,
+                    **kwargs
                 )
             
             # Decode and clean up
@@ -272,46 +316,81 @@ class EnigmaAIVision(SceneModel):
             self._model = model
             self.tokenizer = tokenizer
             self.feature_extractor = feature_extractor
+            self._model.eval()
         except Exception as e:
             raise ModelLoadError(f"Failed to load EnigmaAIVision model: {str(e)}")
         
     def predict(self, image: Union[Image.Image, bytes], prompt: str, **kwargs) -> str:
-        self._model.eval()
-        inputs = self.feature_extractor(images=image, return_tensors="pt")
-        pixel_values = inputs.pixel_values.to(self._device)
-        kwargs["pixel_values"] = pixel_values
-
-        # tokenize prompt
-        prompt_inputs = self.tokenizer(prompt, add_special_tokens=False, return_tensors="pt")
-        prompt_ids = prompt_inputs.input_ids.to(self._device)
-        prompt_len = prompt_ids.size(-1)
-        
-        default_kwargs = {
-            "pixel_values": pixel_values,
-            "decoder_input_ids": prompt_ids,
-            "pad_token_id": self.tokenizer.pad_token_id,
-            "eos_token_id": 50,
-            "max_new_tokens": 50,
-            "min_length": 10,
-            "num_beams": 3,
-            "length_penalty": 0.7,
-            "no_repeat_ngram_size": 3,
-        }
-        
-        kwargs = {**default_kwargs, **kwargs}
+        if isinstance(image, bytes):
+            image = Image.open(io.BytesIO(image)).convert("RGB")
+            
+            # Use a simple format that LLaVA understands
+        formatted_prompt = f"USER: <image>\n{prompt}\nASSISTANT:"
+            
+        inputs = self.feature_extractor(
+            images=image, 
+            text=formatted_prompt, 
+            return_tensors="pt"
+        ).to(self._device)
         
         with torch.no_grad():
-            output_ids = self._model.generate(**kwargs)
-            
-        # slice away the prompt tokens
-        gen_ids = output_ids[0][prompt_len:]
+            output_ids = self._model.generate(
+                **inputs,
+                max_new_tokens=15,
+                min_length=5,
+                do_sample=True,
+                temperature=0.7,
+                pad_token_id=self.tokenizer.eos_token_id,
+                eos_token_id=self.tokenizer.eos_token_id,
+                **kwargs
+            )
         
-        # decode and strip any leading junk
-        raw = self.tokenizer.decode(gen_ids, skip_special_tokens=True)
-        cleaned = re.sub(r'^[^A-Za-z0-9]+', '', raw).strip()
-        if "." in cleaned:
-            cleaned = cleaned[: cleaned.rfind(".") + 1 ]
-        return cleaned
+        # Decode and clean up
+        full_response = self.tokenizer.decode(output_ids[0], skip_special_tokens=True)
+        
+        # Extract only the assistant's response
+        if "ASSISTANT:" in full_response:
+            response = full_response.split("ASSISTANT:")[-1].strip()
+        else:
+            response = full_response.strip()
+            
+        return response
+        
+        # inputs = self.feature_extractor(images=image, return_tensors="pt")
+        # pixel_values = inputs.pixel_values.to(self._device)
+        # kwargs["pixel_values"] = pixel_values
+
+        # # tokenize prompt
+        # prompt_inputs = self.tokenizer(prompt, add_special_tokens=False, return_tensors="pt")
+        # prompt_ids = prompt_inputs.input_ids.to(self._device)
+        # prompt_len = prompt_ids.size(-1)
+        
+        # default_kwargs = {
+        #     "pixel_values": pixel_values,
+        #     "decoder_input_ids": prompt_ids,
+        #     "pad_token_id": self.tokenizer.pad_token_id,
+        #     "eos_token_id": 50,
+        #     "max_new_tokens": 15,
+        #     "min_length": 3,
+        #     "num_beams": 3,
+        #     "length_penalty": 0.7,
+        #     "no_repeat_ngram_size": 3,
+        # }
+        
+        # kwargs = {**default_kwargs, **kwargs}
+        
+        # with torch.no_grad():
+        #     output_ids = self._model.generate(**kwargs)
+            
+        # # slice away the prompt tokens
+        # gen_ids = output_ids[0][prompt_len:]
+        
+        # # decode and strip any leading junk
+        # raw = self.tokenizer.decode(gen_ids, skip_special_tokens=True)
+        # cleaned = re.sub(r'^[^A-Za-z0-9]+', '', raw).strip()
+        # if "." in cleaned:
+        #     cleaned = cleaned[: cleaned.rfind(".") + 1 ]
+        # return cleaned
             
 class ModelFactory:
     
@@ -320,9 +399,9 @@ class ModelFactory:
         SCENE = 1
         
     class ModelName(Enum):
-        LLAVA = "llava-hf/llava-1.5-7b-hf"      # from Hugging Face
-        AYA = "CohereLabs/aya-vision-8b"        # from Hugging Face
-        ENIGMAAI = "api/models/SceneModel"      # custom trained model       
+        LLAVA = "llava-hf/llava-1.5-7b-hf"              # from Hugging Face
+        AYA = "CohereLabs/aya-vision-8b" # from Hugging Face
+        ENIGMAAI = "api/models/SceneModel"              # custom trained model       
     
     @staticmethod
     def get_model(type: ModelType, name: ModelName) -> BaseModel:

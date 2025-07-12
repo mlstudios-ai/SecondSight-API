@@ -21,10 +21,11 @@ async def lifespan(app: FastAPI):
             ModelFactory.ModelName.LLAVA)
         print(f"LLaVA model initialised")
         
-        # app.state.aya  = ModelFactory.get_model(
-        #     ModelFactory.ModelType.SCENE,
-        #     ModelFactory.ModelName.AYA)
-        # print(f"AYA model initialised")
+        app.state.aya  = ModelFactory.get_model(
+            ModelFactory.ModelType.SCENE,
+            ModelFactory.ModelName.AYA)
+        print(f"AYA model initialised")
+        
     except Exception as e:
         print(f"Failed to initialise model: {str(e)}")
         raise
@@ -32,7 +33,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     app.state.enigmaai.finalize()
     app.state.llava.finalize()
-    # app.state.aya.finalize()
+    app.state.aya.finalize()
 
 app = FastAPI(lifespan=lifespan)
 

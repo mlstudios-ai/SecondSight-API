@@ -16,6 +16,10 @@ def get_enigmaai_model(request: Request) -> SceneModel:
 def get_llava_model(request: Request) -> SceneModel:
     """Dependency to get the model from application state."""
     return request.app.state.llava
+
+def get_aya_model(request: Request) -> SceneModel:
+    """Dependency to get the model from application state."""
+    return request.app.state.aya
     
 @router.post("/api/scene/describe")
 async def infer(
@@ -55,18 +59,20 @@ async def infer(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-# @router.post("/api/aya/scene/describe")
-# async def ayaInfer(
-#     file: UploadFile = File(...),
-#     prompt: str = Form(...),
-#     model: SceneModel = Depends(get_llava_model)):
-#     return infer(file, prompt, model)
-
 @router.post("/api/llava/scene/describe")
 async def llavaInfer(
     file: UploadFile = File(...),
     prompt: str = Form(...),
     model: SceneModel = Depends(get_llava_model)):
+    
+    restuls = await infer(file, prompt, model)
+    return restuls
+
+@router.post("/api/aya/scene/describe")
+async def llavaInfer(
+    file: UploadFile = File(...),
+    prompt: str = Form(...),
+    model: SceneModel = Depends(get_aya_model)):
     
     restuls = await infer(file, prompt, model)
     return restuls

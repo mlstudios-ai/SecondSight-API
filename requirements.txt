@@ -16,6 +16,9 @@ transformers==4.51.3
 huggingface-hub==0.31.4
 onnx
 bitsandbytes
+mlx 
+mlx-lm
+mlx-vlm
 # scipy==1.15.2
 # tqdm==4.67.1
 # pycocoevalcap

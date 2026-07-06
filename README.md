@@ -6,9 +6,9 @@ FastAPI-based remote inference service for the **SecondSight** assistive AI appl
 
 SecondSight-API is one of three core components in the SecondSight system:
 
-1. **SecondSight-MLOps** - Automated ML pipelines for model training and deployment using ClearML
+3. **[SecondSight](https://github.com/mlstudios-ai/SecondSight)** - iOS client application in SwiftUIdeployment using ClearML
 2. **SecondSight-API** - Remote model inference endpoint (this repository)
-3. **SecondSight** - iOS client application in SwiftUI
+1. **[SecondSight-MLOps](https://github.com/mlstudios-ai/SecondSight-MLOps)** - Automated ML pipelines for model training and 
 
 For more information, visit the [main project repository](https://github.com/mlstudios-ai/SecondSight).
 

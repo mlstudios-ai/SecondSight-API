@@ -2,6 +2,9 @@
 
 FastAPI-based remote inference service for the **SecondSight** assistive AI application. This component provides scene description capabilities using Vision Language Models (VLMs) for individuals with visual impairment.
 
+> Scene Description model API is for lower spec iPhones and earlier version of SecondSight.
+> New version now uses FastVLM that requires significantly more memory and storage.
+
 ## Overview
 
 SecondSight-API is one of three core components in the SecondSight system:
@@ -286,13 +289,8 @@ bitsandbytes                       # Quantization support
 
 ## Limitations
 
-- **Memory Usage**: Loading 3 VLMs simultaneously requires significant RAM (16GB+ recommended)
-- **Startup Time**: Models load at startup, causing initial delay (30-60 seconds)
-- **Model Size**: EnigmaAI model not included in repo, must be trained separately
-- **Hardcoded Path**: Image save path in `api.py:47` is absolute and user-specific
-- **Internet Required**: LLaVA and Aya models download from Hugging Face on first run
-- **Single Instance**: Not designed for horizontal scaling (models in application state)
-- **CORS**: Currently allows all origins - should be restricted in production
+- **Small Dataset**: custom curated dataset approximately 2k samples
+- **Startup Time**: Models load at cold start, causing initial delay (30-60 seconds)
 
 ## Future Considerations
 
@@ -320,11 +318,3 @@ From Level Design Document v0.2:
 - **Temperature**: 0.7 for balanced creativity and determinism
 - **Token Limits**: Configured per model (15 for EnigmaAI, 50 for LLaVA/Aya)
 - **Error Handling**: Custom exceptions (ModelError, ModelLoadError, PredictionError)
-
-## License & Attribution
-
-**Author**: Anna Huang (Data Scientist & Tech Lead)  
-**Team**: EnigmaAI  
-**Product**: SecondSight v0.2  
-**License**: MIT License (see model.py for full text)  
-**Context**: Academic prototype developed for UTS MAI AIS coursework
